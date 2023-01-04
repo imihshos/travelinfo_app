@@ -1,0 +1,1326 @@
+---
+title: "Europe Travel App"
+date: "7 November 2020"
+output: 
+  html_document:
+    toc: true
+    theme: flatly
+    df_print: paged
+---
+```{css echo=FALSE}
+pre code, pre, code {
+  white-space: pre !important;
+  overflow-x: scroll !important;
+  word-break: keep-all !important;
+  word-wrap: initial !important;
+}
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(width=1000)
+```
+
+# Introduction and Case Description
+
+Despite the economic downturn caused by Covid-19, tourism is still expected to remain a critical part of the economy for many countries. Domestic tourism, in particular, will see a huge boom in the near future as international flights will not be widely available for some period of time. The issue and opportunity that we would like to target is hence tourism in Europe, with the goal to aid potential travelers in making better data-driven decisions through the consolidation of information that can be more easily understood.
+
+Though there are many sources of travel information, one pain point faced by potential travelers is that online information, while easily accessible, is often fragmented and scattered. Be it deciding which country or city to visit, which hotel to stay at, which restaurants to eat at, which sights to see, or what the current Covid-19 outlook or tourist traffic is in their country of choice, prospective visitors must browse through a myriad of webpages to retrieve the desired information, which may be rather inconvenient and time consuming. There are limited available and convenient “dashboards” that easily summarise key information and statistics of concern (eg. weather, health and safety i.e. Covid-19 cases, ratings) to travelers about the destination. Additionally, information from travel blogs tend to be qualitative and subjective, based on the writer’s own personal experience which may not always be applicable to every user.
+
+Given the importance of travel planning, we believe that there is a need to publish an application that is able to gather key and unbiased information from various sources, to help users make their informed decision based on their interest, choices and preferences. 
+
+# Business Objectives
+
+Our app aims to provide convenience in travel planning to potential and existing travelers visiting countries in Europe. Users are able to browse through multiple tabs with the input interface, allowing them to choose their destination of interest along with other specifications. Real-time data on the development of Covid-19 cases in the different European countries will also be highlighted. The high-level overview for each country provided by our app will therefore provide users with a brief understanding of their destination of interest, whereby they will be given full control of how they would like to plan for their travel journey according to their own interests, with suggestions and recommendations based on the user’s priorities and preference.
+
+# Market Positioning 
+
+The goal of our app is not to compete with established ratings and booking websites such as tripadvisor.com, but rather to complement them by sourcing and gathering information neatly into a convenient, user-friendly dashboard. This enables personal customisation and from the high-level overview, users will hopefully gain an initial understanding of their place of interest in Europe and using it, they can then carry out their own further research should they choose to embark on their travels. 
+
+# Overview of the App Functionanlity
+
+This version is created using data obtained about various European countries. Due to limitations in data availability, not all countries are represented in the different tabs. Nonetheless, this app is designed to include all countries in Europe, as well those of other continents. 
+
+To facilitate the data cleaning and building of the app, the following libraries were first loaded as listed below.
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(magrittr)
+library(shiny)
+library(shinythemes)
+library(shinyWidgets)
+library(shinyjs)
+library(shinycssloaders)
+library(shinyTime)
+library(htmlwidgets)
+library(htmltools)
+library(ggmap)
+library(plotly)
+library(leaflet)
+library(leaflet.extras)
+library(rworldmap)
+library(sp)
+library(jsonlite)
+library(rjson)
+library(DataCombine)
+library(DT)
+library(lubridate)
+library(xml2)
+library(rvest)
+```
+
+## Tab 1 - About Us
+
+This introductory tab lists out what our App has to offer, briefly describing what information each tab can provide to the users. 
+
+## Tab 2 - Travel Map
+
+This tab provides the high-level overview of different landmarks available in the country, namely Accommodation, Attractions, Food, Transport and Shopping. Users will be able to select the country in which they are interested in, and the map will automatically zoom into the location showing first the number of each type of attractions, identified by different colours. Further interaction and exploration with the map allows users to click onto the attractions in which they are interested, which is linked to a pop-up showcasing a short description about the landmark along with any url linking to pages with more details.
+
+Ideas and Methodology:
+
+* The dataset was obtained from https://github.com/baturin/wikivoyage-listings, which was crawled from Wikivoyage, the travel guide by Wikimedia. Each row of data is an attraction (e.g. hotel, restaurants, sights) from the original article on Wikivoyage in a city/area (e.g. London, New York City).
+* While the data at latitude and longitude information, it did not have the continent and country data. The rworldmap package was used to match the latitude and longitude data of each entry to a continent and country.
+* Thereafter, as our app focus was on Europe, data was filtered to only Europe entries.
+* To simplify the categories of landmarks, the data was further cleaned and sorted by a category of landmark, namely, Accommodation, Attractions, Food, Transport and Shopping according to the original ‘type’ column.
+* Users can provide input of “country” in the UI via a pickerInput format or do a live search in the search bar to choose the country of interest. It is also possible to do a multi-select of a few countries. A reset button is included for ease of resetting the input by the user.
+* Geographical locations of the landmarks are shown using a Leaflet Map. Interactive zooming is allied with the other inputs (i.e. which type of landmark) as optional filters and choosing the maptype the user would like to see.
+* Each landmark is added as a marker using the AddAwesomeMarker add-in with individual icons added by the category of landmark (e.g. hotel icon for accommodation landmarks). 
+* To provide useful information for the user when looking at the individual landmarks, the description of each landmark from the dataset was cleaned to sentence case.
+* Simple HTML text editing was done to ensure the pop-up shows the right information including (a) city name, (b) landmark type, (c) description, if available, and (d) website link, if available. 
+
+```{r travel, message=FALSE, warning=FALSE}
+# Data Preparation and Loading
+wiki <- read.csv('wikivoyage-listings-en-latest.csv') %>% select(-wifi, -accessibility)
+summary(wiki)
+
+wiki.complete <- wiki[!is.na(wiki$longitude), ]
+wiki.complete <- wiki.complete[!is.na(wiki.complete$latitude), ]
+wiki.complete$type <- as.factor(wiki.complete$type)
+summary(wiki.complete$type)
+
+# Extract long lat data to match with country/continent data
+wiki.points <- wiki.complete %>% select(longitude, latitude)
+
+# Function to obtain country from coordinates
+coords2country <- function(points){
+  countriesSP <- getMap(resolution='low')
+  pointsSP <- SpatialPoints(points, proj4string=CRS(proj4string(countriesSP)))  
+  indices <- over(pointsSP, countriesSP)
+  
+  return(indices$ADMIN)
+}
+
+# Function to obtain continent from coordinates
+coords2continent <- function(points){
+  countriesSP <- getMap(resolution='low')
+  pointsSP <- SpatialPoints(points, proj4string=CRS(proj4string(countriesSP)))  
+  indices <- over(pointsSP, countriesSP)
+  
+  return(indices$REGION) 
+}
+
+# Match data lat long to continent and country
+wiki.complete$continent <- coords2continent(wiki.points)
+wiki.complete$country   <- coords2country(wiki.points)
+
+# Sort and Factor Types of Landmarks
+wiki.complete$type.sorted <- ifelse(wiki.complete$type %in% c("hotel", "sleep"), "Accommodation", 
+                                    ifelse(wiki.complete$type %in% c("drink", "cafe", "eat"), "Food", 
+                                           ifelse(wiki.complete$type %in% c("view", "see", "island", 
+                                                                            "learn", "do", "city", 
+                                                                            "park", "beach", "vicinity"), 
+                                                  "Attractions", 
+                                                  ifelse(wiki.complete$type == "buy", "Shopping", 
+                                                         ifelse(wiki.complete$type == "go", 
+                                                                "Transport", "Others")))))
+
+# Filter data to only Europe and remove countries with fewer than 30 rows of data
+wiki.complete.Europe <- wiki.complete %>% filter(continent == "Europe")
+
+entries.countries.30 <- wiki.complete.Europe %>% 
+                        group_by(country) %>% 
+                        summarise(no.of.entries = length(country)) %>% 
+                        filter(no.of.entries > 30) 
+
+countries.30 <- entries.countries.30$country
+
+wiki.complete.Europe <- wiki.complete.Europe %>% 
+                        filter(country %in% countries.30) %>% 
+                        select(-lastEdit, -image, -fax, -wikipedia, -wikidata)
+
+# Cleaning up description for labels
+wiki.complete.Europe$title <- str_to_title(wiki.complete.Europe$title)
+
+# Html for description for labels
+wiki.complete.Europe$label_text <- ifelse(
+  wiki.complete.Europe$description == "" & wiki.complete.Europe$url == "", 
+  paste0('<strong>', 'City: ', '</strong>', wiki.complete.Europe$article, '<br/>', 
+         '<strong>', 'Place: ', '</strong>', wiki.complete.Europe$title, '<br/>'),
+  
+  ifelse(wiki.complete.Europe$description == "" & wiki.complete.Europe$url != "",
+         paste0('<strong>', 'City: ', '</strong>', wiki.complete.Europe$article, '<br/>', 
+                '<strong>', 'Place: ', '</strong>', wiki.complete.Europe$title, '<br/>',
+                '<strong>', '<a href = "', wiki.complete.Europe$url, '"',
+                '" title = "', wiki.complete.Europe$url, '">',
+                'Click here to find out more', '</a>', '</strong>'), 
+                                          
+         ifelse(wiki.complete.Europe$description != "" & wiki.complete.Europe$url != "", 
+                paste0('<strong>', 'City: ', '</strong>', wiki.complete.Europe$article, '<br/>', 
+                       '<strong>', 'Place: ', '</strong>', wiki.complete.Europe$title, '<br/>',
+                       '<strong>','Description: ', '</strong>', wiki.complete.Europe$description, '</br>',
+                       '<strong>', '<a href = "', wiki.complete.Europe$url, '"',
+                       '" title = "', wiki.complete.Europe$url, '">',
+                       'Click here to find out more', '</a>', '</strong>'),
+                                                       
+                paste0('<strong>', 'City: ', '</strong>', wiki.complete.Europe$article, '<br/>', 
+                       '<strong>', 'Place: ', '</strong>', wiki.complete.Europe$title, '<br/>', 
+                       '<strong>','Description: ', '</strong>', wiki.complete.Europe$description)
+)))    
+
+head(wiki.complete.Europe, 10)    
+
+# Creating dataframes for each type of attraction
+attraction.type.list.Europe<-c("Accommodation", "Attractions", "Food", "Transport", "Shopping")
+
+# Creating dataframes for each type of attraction
+attraction.type.list.Europe <- c("Accommodation", "Attractions", "Food", "Transport", "Shopping")
+
+# Legend Html generator:
+markerLegendHTML <- function(IconSet) {
+  # container div:
+  legendHtml <- "<div style='padding: 6px; padding-bottom: 6px;'><h4 style='padding-top:0; padding-bottom:10px; margin: 0;'> Landmark Legend </h4>"
+  
+  n <- 1
+  # Add each icon for font-awesome icons icons:
+  for (Icon in IconSet) {
+    if (Icon[["library"]] == "fa"){
+        legendHtml<- paste0(legendHtml, "<div style='width: auto; height: 45px'>",
+                            "<div style='position: relative; top: -6px; display: inline-block; width: 36px; height: 45px' class='awesome-marker-icon-",Icon[["markerColor"]]," awesome-marker'>",
+                            "<i style='margin-left: 1px; margin-top: 11px; 'class= 'fa fa-",Icon[["icon"]]," fa-inverse'></i>",
+                            "</div>",
+                            "<p style='position: relative; top: 4px; display: inline-block; ' >", names(IconSet)[n] ,"</p>",
+                            "</div>")    
+    }
+    n <- n + 1
+  }
+  
+  paste0(legendHtml, "</div>")
+}
+
+IconSet <- awesomeIconList(
+  "Accommodation" <- makeAwesomeIcon(icon = 'hotel', markerColor = 'green', 
+                                     iconColor = 'black', library = "fa"),
+  "Attractions"   <- makeAwesomeIcon(icon = 'star', markerColor = 'blue', 
+                                     iconColor = 'black', library = "fa"),
+  "Food"          <- makeAwesomeIcon(icon = 'coffee', markerColor = 'purple', 
+                                     iconColor = 'black', library = "fa"),
+  "Transport"     <- makeAwesomeIcon(icon = 'bus', markerColor = 'red', 
+                                     iconColor = 'black', library = "fa"),
+  "Shopping"      <- makeAwesomeIcon(icon = 'shopping-bag', markerColor = 'orange', 
+                                     iconColor = 'black', library = "fa")
+)
+```
+
+An illustration of the Travel Overview leaflet map for United Kingdom as the selected country input is as shown:
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.align='center'}
+map <- leaflet() %>% addTiles(group = "Default") %>%
+                     addProviderTiles("Stamen.Toner", group = "Toner") %>%
+                     addProviderTiles(providers$Stamen.TonerLite, group = "Toner Lite") %>%
+                     addLayersControl(baseGroups = c("Default", "Toner", "Toner Lite"),
+                                      overlayGroups = attraction.type.list.Europe, 
+                                      options = layersControlOptions(collapsed = TRUE)) %>%
+                     addEasyButton(easyButton(icon = "fa-globe", 
+                                              title = "Back to Default Zoom",
+                                              onClick = JS("function(btn, map){ map.setZoom(2); }")))
+  
+data_map <- wiki.complete.Europe %>% filter(country == 'United Kingdom')
+
+travelmap_select1 <- data_map %>% filter(type.sorted == attraction.type.list.Europe[1])
+travelmap_select2 <- data_map %>% filter(type.sorted == attraction.type.list.Europe[2])
+travelmap_select3 <- data_map %>% filter(type.sorted == attraction.type.list.Europe[3])
+travelmap_select4 <- data_map %>% filter(type.sorted == attraction.type.list.Europe[4])
+travelmap_select5 <- data_map %>% filter(type.sorted == attraction.type.list.Europe[5])
+
+map <- map %>%
+        clearMarkerClusters() %>%
+        clearMarkers() %>%
+        fitBounds(lng1 =  min(data_map$longitude), lat1 = min(data_map$latitude), 
+                  lng2 =  max(data_map$longitude), lat2 = max(data_map$latitude)) %>%
+        addAwesomeMarkers(lng = travelmap_select1$longitude,
+                          lat = travelmap_select1$latitude, 
+                          popup = travelmap_select1$label_text %>% lapply(htmltools::HTML),
+                          icon = IconSet$Accommodation,
+                          group = attraction.type.list.Europe[[1]],
+                          clusterOptions = markerClusterOptions()) %>%
+        addAwesomeMarkers(lng = travelmap_select2$longitude,
+                          lat = travelmap_select2$latitude, 
+                          popup = travelmap_select2$label_text %>% lapply(htmltools::HTML),
+                          icon = IconSet$Attractions,
+                          group = attraction.type.list.Europe[[2]],
+                          clusterOptions = markerClusterOptions()) %>%
+        addAwesomeMarkers(lng = travelmap_select3$longitude,
+                          lat = travelmap_select3$latitude, 
+                          popup = travelmap_select3$label_text %>% lapply(htmltools::HTML),
+                          icon = IconSet$Food,
+                          group = attraction.type.list.Europe[[3]],
+                          clusterOptions = markerClusterOptions()) %>%
+        addAwesomeMarkers(lng = travelmap_select4$longitude,
+                          lat = travelmap_select4$latitude, 
+                          popup = travelmap_select4$label_text %>% lapply(htmltools::HTML),
+                          icon = IconSet$Transport,
+                          group = attraction.type.list.Europe[[4]],
+                          clusterOptions = markerClusterOptions()) %>%
+        addAwesomeMarkers(lng = travelmap_select5$longitude,
+                          lat = travelmap_select5$latitude, 
+                          popup = travelmap_select5$label_text %>% lapply(htmltools::HTML),
+                          icon = IconSet$Shopping,
+                          group = attraction.type.list.Europe[[5]],
+                          clusterOptions = markerClusterOptions())
+map
+```
+
+## Tab 3 - Covid-19
+
+This tab provides real-time data of the number of covid cases in each European country. The data is obtained from the https://opendata.ecdc.europa.eu whereby the number of cases is updated on a daily basis. For the covid-19 map, users are able to select the date to visualise the number of covid-19 cases reported (represented by the blue circle) and cumulative number of cases (represented by the red circle) in the map. They are able to zoom in to get a better sense of the difference between countries, as indicated by the size of the various circles. For the covid-19 plot, this is a time series that shows the number of cases against the date, starting from 2020. 
+
+Ideas and Methodology:
+
+* Data is scrapped from the web using jsonlite::fromJSON.
+* ggmap::geocode is used to get the longitude and latitude for each country. Inner join is then done to match these coordinates to the different observations on the country.
+* x-axis for plot is restricted by the latest date selected, while country selection allows for multiple countries to be visualised at the same time.
+* Bar graphs are used to show the number of new Covid cases per day and the line graphs are used to show the number of cumulative Covid cases 
+* For the map, users are able to compare the number of Covid cases across all the countries in Europe. Users have the option to view the new and cumulative cases together or separately. 
+
+```{r covid19, message=FALSE, warning=FALSE}
+# Obtaining real time Covid-19 data from the European Centre for Disease Prevention and Control website
+covid_url <- "https://opendata.ecdc.europa.eu/covid19/casedistribution/json"
+covid_data <- fromJSON(file=covid_url)
+
+# Storing the data as a dataframe and only keeping the Europe data
+covid.df <- as.data.frame(t(sapply(covid_data$records,c)))%>% filter(continentExp == 'Europe')
+covid.countries <- as.character(unique(covid.df$countriesAndTerritories))
+
+# Appending latitude and longitude data to the dataframe 
+covid.coords    <- cbind(covid.countries, ggmap::geocode(covid.countries))
+covid.coords
+
+# Keeping only the relevant columns 
+covid.df.2 <- covid.df %>% 
+  inner_join(covid.coords, by = c('countriesAndTerritories' = 'covid.countries')) %>% 
+  select(contains('date'), contains('countries'), contains('cases'), contains('death'), lon, lat) 
+
+# Cumulative refers to cumulative number of cases for 14 days per 100,000
+colnames(covid.df.2) <- c('Date', 'Countries', 'Cases', 'Cumulative', 'Deaths', 'lon', 'lat')
+
+covid.df.2$Cases <- as.numeric(covid.df.2$Cases)
+covid.df.2$Cumulative <- round(as.numeric(covid.df.2$Cumulative))
+covid.df.2$Deaths <- as.numeric(covid.df.2$Deaths)
+
+if (class(covid.df.2$Date) == 'character'){
+  covid.df.2$Date <- dmy(covid.df.2$Date)
+}
+
+cv_min_date <- min(covid.df.2$Date)
+cv_max_date <- max(covid.df.2$Date)
+
+head(covid.df.2, 20)
+```
+
+An illustration of the Covid-19 leaflet map for 7 November 2020 as the selected Date input is as shown:
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.align='center'}
+data_map2 <- covid.df.2 %>% filter(Date == '2020-11-07')
+  
+map2 <- leaflet() %>% 
+        addTiles(group = "Default") %>% 
+        addProviderTiles("Stamen.Toner", group = "Toner") %>%
+        addProviderTiles(providers$Stamen.TonerLite, group = "Toner Lite") %>%
+        addLayersControl(position = "bottomright",
+                         baseGroups = c("Default", "Toner", "Toner Lite"),
+                         overlayGroups = c("COVID - New Cases", 
+                                           "COVID - Cumulative Cases for 14 days per 100,000"),
+                         options = layersControlOptions(collapsed = TRUE)) %>% 
+        fitBounds(0, -25, 90, 65) %>% 
+        addProviderTiles(providers$CartoDB.Positron) %>%
+        addEasyButton(easyButton(icon = "fa-globe", 
+                                 title = "Back to Default Zoom",
+                                 onClick = JS("function(btn, map){ map.setZoom(2); }")))
+
+map2 <- map2 %>% 
+        clearMarkers() %>% 
+        clearShapes() %>%
+        addCircleMarkers(data = data_map2, 
+                         lat = ~lat, 
+                         lng = ~lon, 
+                         weight = 1, 
+                         radius = ~(Cases)^(1/4), 
+                         fillOpacity = 0.2, 
+                         color = "#cc0264", 
+                         group = 'COVID - New Cases', 
+                         label = sprintf("<strong>%s (New)</strong><br/>Confirmed cases: %s<br/>Deaths: %d", 
+                                         data_map2$Countries, 
+                                         data_map2$Cases, 
+                                         data_map2$Deaths) %>% lapply(htmltools::HTML),
+                         labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
+                                                     textsize = "15px", direction = "auto")) %>%
+        addCircleMarkers(data = data_map2, 
+                         lat = ~lat, 
+                         lng = ~lon, 
+                         weight = 1, 
+                         radius = ~(Cumulative)^(1/4), 
+                         fillOpacity = 0.2, 
+                         color = "#0267cc", 
+                         group = 'COVID - Cumulative Cases for 14 days per 100,000', 
+                         label = sprintf("<strong>%s (Cumulated)</strong><br/>Confirmed cases: %s<br/>Deaths: %d", 
+                                         data_map2$Countries, 
+                                         data_map2$Cumulative, 
+                                         data_map2$Deaths) %>% lapply(htmltools::HTML),
+                         labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
+                                                     textsize = "15px", direction = "auto")) 
+map2
+```
+
+## Tab 4 - Weather
+
+Weather and climate is always a major concern for all travelers, being a huge factor in deciding what type of clothes are needed and effectively, luggage size. It also influences travel itinerary since the type of activities they can engage in may be dependent on weather conditions. The plot on this tab summarises the temperature and precipitation expected for each month using historical weather data collected over 30 years to show seasonality, which will provide travellers with a clear and concise overview of monthly weather conditions across major cities in Europe. 
+
+Ideas and Methodology:
+
+* Data is scrapped from https://www.currentresults.com/Weather/Europe using SelectorGadget and read_html().
+* Temperature and weather data combined in the same dataframe using full_join to include available data from all countries.
+* 2 inputs added in UI. Dropdown menus for country and city are sorted in alphabetical order, making it easier for users to find and select their country and city of choice if available. 
+* Dual-axis interactive diagram created using Plotly in the server function to allow users to visualise both concurrently since both are weather related. 
+* Bar graph used for precipitation to show absolute monthly changes and line graph for temperature to show the trend over the year.
+* Shaded area to show the monthly temperature range (highest/lowest temperature) so that tourists will be better informed about extreme temperature that may potentially arise
+* Average annual values for both temperature and precipitation plotted using dotted horizontal lines for users to compare monthly data to the annual average
+* In the event the user only wants to focus on temperature/precipitation data, users can click on the legends to remove plots they deem as irrelevant. 
+* Interactive features included to improve user experience. Hover tips are used to display the actual values of each data point to cater to users who are looking for more specific data. Zooming and auto scaling options will provide clearer data visualisation according to the user's preference. 
+
+```{r weather, message=FALSE, warning=FALSE}
+# Web scrapping monthly temperature data from Current Results website and storing results in a dataframe
+temp <- data.frame(Month = as.character(), City = as.character(), 
+                   High = as.numeric(), Low = as.numeric())
+
+months <- c("january", "february", "march", "april", "may", "june", 
+            "july", "august", "september", "october", "november", "december")
+
+for (month in months){
+  url  <- paste0(paste0("https://www.currentresults.com/Weather/Europe/Cities/temperature-",month), ".php")
+  page <- read_html(url)
+
+  City <- html_text(html_nodes(page, "td:nth-child(3)"))
+  HighTemp <- html_text(html_nodes(page, "td:nth-child(4)"))
+  LowTemp <- html_text(html_nodes(page, "td:nth-child(5)"))
+  
+  temp_month <- data.frame(Month = str_to_title(month), City = City, 
+                           TempHigh = HighTemp, TempLow = LowTemp)
+  tempsorted <- temp_month %>% separate(City, c("City","Country"), ", ") %>% 
+                               select(Country, everything()) %>% 
+                               arrange(Country)
+  temp <- rbind(temp, tempsorted)  
+}
+
+temp$TempHigh <- as.numeric(temp$TempHigh)
+temp$TempLow  <- as.numeric(temp$TempLow)
+temp$TempAverage <- (temp$TempHigh + temp$TempLow)/2
+
+# Web scrapping monthly precipitation data from Current Results website and storing results in a dataframe
+precipitation <- data.frame(Month = as.character(), City = as.character(), Precipitation = as.numeric())
+
+for (month in months){
+  url2 <- paste0(paste0("https://www.currentresults.com/Weather/Europe/Cities/precipitation-",month), ".php")
+  page <- read_html(url2) 
+  
+  RCity <- html_text(html_nodes(page, "td:nth-child(2)"))
+  Rainfall <- html_text(html_nodes(page, "td:nth-child(4)"))
+  
+  rainfall_month  <- data.frame( Month=str_to_title(month),City=RCity, Precipitation=Rainfall)
+  rainfall_sorted <- rainfall_month %>% separate(City, c("City","Country"), ", ") %>% 
+                                        select(Country, everything()) %>% 
+                                        arrange(Country)
+  
+  precipitation <- rbind(precipitation, rainfall_sorted)  
+}
+
+precipitation$Precipitation <- as.numeric(precipitation$Precipitation)
+
+# Combining temperature and precipitation dataframes
+joincol <- c("City","Month", "Country")
+weather <- full_join(temp, precipitation, by=joincol)
+weather$Month <- substr(weather$Month, 1, 3)
+weather[is.na(weather)] <- 0
+
+head(weather, 10)
+```
+
+An illustration of the Weather Plot for United Kingdom, London as the selected input is as shown:
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.align='center'}
+citydata <- weather[weather$Country == 'United Kingdom' & weather$City == 'London', ]
+citydata$Month <- factor(citydata$Month, levels = c("Jan", "Feb", "Mar", "Apr", "May", "Jun", 
+                                                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"))
+    
+fig <- plot_ly(citydata) %>% 
+       add_trace(x = ~Month,
+                 y = ~TempAverage, 
+                 type = "scatter",
+                 mode = "line",
+                 name = "Temperature", 
+                 yaxis = "y2",
+                 hovertemplate = ~paste('Month: %{x}', 
+                                        '<br>Average Temperature: %{y:.0}°C')) %>% 
+       add_ribbons(x = ~Month, 
+                   ymin = ~TempLow, 
+                   ymax = ~TempHigh,
+                   name = "Temperature", 
+                   showlegend = FALSE, 
+                   yaxis = "y2",
+                   line = list(color = 'rgba(7, 164, 181, 0.05)'),
+                   fillcolor = 'rgba(7, 164, 181, 0.2)', 
+                   hovertemplate = ~paste('Month: %{x}', 
+                                          '<br>Highest/Lowest Temperature: %{y:.0}°C')) %>% 
+       add_bars(x = ~Month, 
+                y = ~Precipitation,
+                width = 0.6,
+                name = "Precipitation",
+                marker = list(color = '#F08080'), 
+                hovertemplate = ~paste('Month: %{x}', 
+                                       '<br>Average Precipitation: %{y:.0}mm')) %>% 
+       add_lines(x = ~Month, 
+                 y = mean(citydata$TempAverage), 
+                 line = list(width=1, dash="dot"),
+                 name = "Annual Average Temperature",
+                 yaxis = "y2",
+                 hoverinfo = "none") %>% 
+       add_lines(x = ~Month, 
+                 y = mean(citydata$Precipitation), 
+                 line = list(width=1, dash="dot"),
+                 name = "Annual Average Precipitation",
+                 hoverinfo = "none") %>% 
+       layout(yaxis2 = list(tickfont = list(size = 8), overlaying = "y", side = "right",
+                            automargin = TRUE, title = "Average Temperature(°C)", 
+                            titlefont = list(size = 10), range = c(min(citydata$TempLow), 35)),
+              xaxis = list(title="Month", titlefont = list(size = 10), 
+                           tickfont = list(size=10), tickangle = 30),
+              yaxis = list(side = 'left', title = 'Average Precipitation(mm)', 
+                           titlefont = list(size = 10), range = c(0, 120), tickfont = list(size=9)), 
+              legend = list(orientation = 'h', y=-0.2, font = list(size=10)))
+fig
+```
+
+## Tab 5 - Tourist Nights
+
+This plot details the number of nights spent by tourists in the country for each month. The data quantifies tourism volume and indicates the ‘popularity’ of the country, providing users with information about tourist traffic over the year. As such, users will be better informed about when tourist numbers tend to and are expected to peak in the year, and also when are the off seasons for tourism in that particular country. 
+
+Ideas and Methodology:
+
+* Data exported from https://ec.europa.eu/eurostat/databrowser/view/tour_occ_nim 
+* Data was chosen starting from January 2018 onwards since they are recent and hence more relevant. This time period includes data from both before the COVID-19 pandemic, which is more indicative of usual tourism patterns, and during the pandemic, which takes into account trends with travel restrictions in place. 
+* 2 dropdown menus added for selection of countries. Users can select up to two countries for visual comparison. A reset button is also included for users to efficiently clear the inputs. 
+* Interactive bar chart graph plotted using Plotly, with the range of the y-axis changing each time the input is changed to automatically fit the data. Bar chart is plotted in ‘dodge’ format to easily show the absolute number difference between two countries. 
+* Dotted horizontal lines representing the average number of nights spent by tourists over the whole time period for users to compare monthly data to the average. 
+* Interactive features like hover tips are used to display the actual values for each month. Features like zoom in/out give users the option of focusing on visualisations of selected months.
+
+```{r nights, message=FALSE, warning=FALSE}
+# Data Loading and Preparation
+tour1 <- read.csv("TOUR_OCC_NIM1603551018014.csv")
+time  <- as.character(tour1[9, ])
+
+tour2 <- tour1[-(1:14), ]
+tour  <- tour2[-(39:45), ]
+
+rm(list = c('tour1', 'tour2'))
+colnames(tour) <- gsub("-", "", time)
+
+# Selecting relevant columns
+values <- select(tour[, 2:64], starts_with("2"))
+touristdf <- cbind(tour[, 1],values)
+
+touristdf_colnames  <- c("Country", "Jan-18", "Feb-18", "Mar-18", "Apr-18", "May-18",
+                         "Jun-18", "Jul-18", "Aug-18", "Sep-18", "Oct-18", "Nov-18", 
+                         "Dec-18","Jan-19", "Feb-19", "Mar-19", "Apr-19", "May-19", 
+                         "Jun-19", "Jul-19", "Aug-19", "Sep-19", "Oct-19", "Nov-19", 
+                         "Dec-19", "Jan-20", "Feb-20", "Mar-20", "Apr-20", 
+                         "May-20", "Jun-20", "Jul-20", "Aug-20")
+colnames(touristdf) <- touristdf_colnames
+
+#Replacing missing data with NA
+touristdf[touristdf == ":"] <- NA
+
+#Cleaning up country names and data 
+touristdf$Country <- gsub(" \\(.*?\\)", "", touristdf$Country)
+for (i in 2:33){
+  touristdf[1:38, i] <- gsub(",", "", touristdf[1:38, i])
+}
+
+head(touristdf, 10)
+```
+An illustration of the Tourist Night plot for France and Germany as the selected inputs is as shown:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.align='center'}
+countrydata <- gather(touristdf[touristdf$Country == 'France' | 
+                                    touristdf$Country == 'Germany', ],
+                      Month, Nights, "Jan-18":"Aug-20")
+    
+countrydata$Month  <- factor(countrydata$Month, levels = touristdf_colnames[-1])
+countrydata$Nights <- as.numeric(countrydata$Nights)
+    
+country <-  countrydata[complete.cases(countrydata), ]
+country1data <- country[country$Country == 'France', ]
+country2data <- country[country$Country == 'Germany', ]
+    
+if (nrow(country1data) > nrow(country2data)){
+  allmonths <- country1data$Month
+} else {
+  allmonths <- country2data$Month
+}
+    
+fig2 <- plot_ly() %>% 
+        add_bars(data = country1data,
+                 x = ~Month, 
+                 y = ~Nights, 
+                 name = 'France',
+                 marker = list(color = '#FF9673'), 
+                 hovertemplate = ~paste('Month: %{x}', '<br>Nights: %{y:.0}')) %>%
+        add_bars(data = country2data, 
+                 x = ~Month, 
+                 y = ~Nights, 
+                 name = 'Germany',
+                 marker = list(color = '#CC1480'), 
+                 hovertemplate = ~paste('Month: %{x}', '<br>Nights: %{y:.0}')) %>% 
+        add_lines(data = country1data,
+                  x = allmonths,
+                  y = mean(country1data$Nights), 
+                  line = list(width = 1, dash = "dot", color = "green"),
+                  name = paste("Average Nights for", 'France'), 
+                  hoverinfo = "none") %>% 
+        add_lines(data = country2data, 
+                  x = allmonths,
+                  y = mean(country2data$Nights), 
+                  line = list(width = 1, dash = "dot", color = "blue"),
+                  name = paste("Average Nights for", 'Germany'),
+                  hoverinfo = "none") %>% 
+        layout(xaxis = list(title = list(text="Month", standoff=3), 
+                            titlefont = list(size = 10), 
+                            tickfont = list(size = 8), tickangle = 45), 
+               legend = list(orientation = 'h', y = -0.2, font = list(size=10)))
+fig2
+```
+
+## Tab 6 - Restuarants
+
+Food is another important aspect that many travelers will consider in planning their journey. The interactive table presented on this page allows users to search for food places based on the city,  average ratings, cuisine/type and number of reviews. Included are bars, wine bars, pubs and other eateries/drinks joints.
+
+Ideas and Methodology:
+
+* Data is sourced from https://www.kaggle.com/damienbeneschi/krakow-ta-restaurans-data-raw 
+* Price of food is grouped into 3 categories - Moderate (Default), Expensive and Cheap.
+* Average rating is calculated by averaging the individual ratings given by each reviewer.
+* Number of reviews indicates how many times the particular restaurant has been rated. Generally, the more number of reviews, the more ‘accurate’ the average rating is.
+* Reviews are on a 0-5 scale, with 0.5 increments. In general, 5 and 4 up indicates very satisfied reviews and outstanding food quality. 2 and below indicates some dissatisfaction.
+
+```{r restaurants}
+rest <- read.csv("EuropeRestaurants.csv", blank.lines.skip = TRUE)
+rest[rest == ""] <- NA
+rest <- na.omit(rest)
+colnames(rest) <- c('Ranking', 'Name', 'City', 'Type', 'Rating', 'Price', 'Price Level', 
+                    'Number of Reviews', 'Review 1', 'Review 2', 'Review Date')
+head(rest, 10)
+```
+
+## Tab 7 - Luxurious Hotels
+
+This tab provides information on the various luxurious hotels in selected popular destinations such as London and Paris. By definition, these hotels tend to be expensive and should not be considered by travellers looking for cheap accommodation. As such, the information presented here will only be useful and relevant to travellers looking for high quality accommodation with their main priority being quality rather than cost. After choosing the country, users can then filter based on the minimum score and number of reviews to see which hotel fits their needs. Generally, the higher the score and number of reviews indicates greater popularity of the hotel.
+
+Ideas and Methodology:
+
+* Data was sourced from: https://www.kaggle.com/jiashenliu/515k-hotel-reviews-data-in-europe
+* Aggregation was done using group_by to get the number of reviews and calculate the mean rating for each hotel using summarise(). Though unique reviews were given by each user, text analytics is not the focus for this table.
+* Longitude and Latitude data were extracted into another dataframe. Description of pop-up for each marker on the interactive map will include the hotel name, address and average rating.
+* 3 inputs were added in the UI. They are the country of interest (checkbox format), minimum number of reviews (slider format) and minimum average rating (slider format). By default, only the ‘United Kingdom’ option is selected first though it is possible to choose other countries.
+* Interactive table output is created using DTOutput in the server function. This allows users to enter their own searches and arrange the results in any order.  
+* Geographical location of hotels in each country is shown using a Leaflet Map. Interactive zooming is enabled with the other inputs as optional filters. In addition, four different maptypes are available for choosing based on the users' preferences.
+
+```{r hotels, message=FALSE, warning=FALSE}
+hotel <- read.csv('Hotel_Reviews.csv')
+
+hotel <- hotel %>% 
+         select(Hotel_Name, Hotel_Address, Review_Date, Total_Number_of_Reviews, Reviewer_Score, lat, lng) %>% 
+         mutate(Review_Date = mdy(Review_Date)) %>%
+         group_by(Hotel_Name, Hotel_Address, Total_Number_of_Reviews, lat, lng) %>% 
+         summarize(Earliest_Review = min(Review_Date),
+                   Latest_Review = max(Review_Date), 
+                   Average_Score = round(mean(Reviewer_Score, na.rm = T), 2),
+                   Median_Score = median(Reviewer_Score, na.rm = T),
+                  Lowest_Score = min(Reviewer_Score, na.rm = T)) %>% 
+         ungroup() %>% 
+         mutate(country = word(trimws(Hotel_Address), -1), 
+                city = word(trimws(Hotel_Address), -2),
+                Country = ifelse(country == 'Kingdom', 'United Kingdom', country),
+                City = ifelse(city == 'United', 'London', city))
+
+hotel_table <- hotel %>% select(Country, City, Hotel_Name, Hotel_Address,
+                                Average_Score, Median_Score, Lowest_Score, 
+                                Total_Number_of_Reviews, Earliest_Review, Latest_Review)
+
+colnames(hotel_table) <- c('Country', 'City', 'Name', 'Address', 'Average Score', 'Median Rating',
+                           'Lowest Score', 'Number of Reviews', 'Earliest Review', 'Latest Review')
+
+head(hotel_table, 10)
+
+hotel_map <- hotel %>% select(Country, City, Hotel_Name, Hotel_Address, 
+                              Total_Number_of_Reviews, Average_Score, lat, lng) %>% 
+                       filter(!is.na(lat), !is.na(lng)) %>%
+                       mutate(Country = as.factor(Country))
+
+head(hotel_map, 10)
+```
+
+# Shiny App Code
+
+This section shows the user interface (ui) and server source code that implements the above ideas, written and compiled using the Shiny library to produce the Web Application. 
+
+## User Interface 
+
+```{r shiny ui, eval=FALSE}
+ui <- fluidPage(
+  navbarPage(
+    theme = shinytheme("cosmo"), collapsible = TRUE, "Overview of European Countries", id = "nav",
+    
+    # About Us Tab =================================================
+    tabPanel('About Us', id="aboutus",
+             
+             mainPanel(
+               h3("Introduction"),
+               h5(p("Hello, we are a group of NUS Students from the School of Business.
+                    Through this page, we hope that you will be able to find key information to help in your travel planning! ")),
+               p(),
+               h3(p("Philosophy of Site")),
+               h5(p("Travel Map - Use this to get a snippet of what your country of interest has to offer in terms of attractions, food and more.")),
+               h5(p("Covid-19 - Worried about your health? Fret Not! With this map, you can see the live distribution of Covid-19 cases.")),
+               h5(p("Weather - This interactive graph tells you what to expect with regards to climate of your country of interest. Know more to pack less clothes!")),
+               h5(p("Tourist Nights - Curious about how popular your country of interest is? All you need to know is located here!")),
+               h5(p("Restaurants - Look for your favourite cuisine and food places, based on multiple reviews!")),
+               h5(p("Luxurious Hotels - Fancy a nice accomodation? Here you can find the ratings of some of the most luxurious hotels!")),
+               p(),
+               h3(p("Can't wait for your next holiday? Join us on this journey to your next destination using our app now!")),
+               tags$img(src = "https://images.unsplash.com/photo-1566371486490-560ded23b5e4?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=crop&w=900&q=60")
+             )                   
+    ),
+    
+    # Travel Map Tab =================================================
+    tabPanel('Travel Map', id="maptab",
+             sidebarPanel(
+               shinyjs::useShinyjs(),
+               h5(tags$strong("Select the country/countries that you wish to find out more about from the drop-down bar below.")),
+               h6(tags$ol(tags$li("To view only one country, click the reset button, and pick the country of interest."),
+                          tags$li("To get an overview of multiple countries, select the countries of interest."),
+                          tags$li("You may also type your country of interest in the search bar."),
+                          tags$li("The landmark markers are clustered based on the number of landmarks in each sub-area. 
+                                           Click to zoom in for details of individual markers."),
+                          tags$li("Click on each marker to find out more about that landmark."))),
+               p(),
+               pickerInput("travel_country", "Country:",   
+                           choices = as.character(unique(sort(wiki.complete.Europe$country))), 
+                           options = list(`actions-box` = TRUE, `none-selected-text` = "Choose your destination!", `live-search`=TRUE, `live-search-placeholder`="Type your destination!"),
+                           selected = NULL,
+                           multiple = TRUE),
+               actionButton("travel_reset_input", "Reset"),
+               p(),
+               markerLegendHTML(IconSet = IconSet) %>% lapply(htmltools::HTML)
+             ),
+             
+             mainPanel(
+               h5("Select the type of landmarks you wish to find out more about or toggle the map display type from the layer options."),
+               tags$style(type = "text/css", "#mymap {height: calc(100vh - 80px) !important;}"),
+               leafletOutput('travelmap') %>% withSpinner())
+             
+    ), 
+ 
+    # Covid-19 Tab =================================================
+    tabPanel('Covid-19', id = 'covid',
+             headerPanel("COVID-19 Cases In Europe"),
+             sidebarPanel(
+               h6("The slider could be used for the map to view the number of COVID cases on a particular day, and to see the progression of cases in the graph."),
+               
+               # Slider bar for input of dates
+               sliderInput(inputId = "covid_date",
+                           label = h5(tags$strong("Select Date:")),
+                           value = cv_max_date,
+                           min = cv_min_date,
+                           max = cv_max_date,
+                           timeFormat = "%d %b"),
+               
+               h6("The drop down bar could be used for the graph to view the trend of COVID cases for countries of your choice."),
+               
+               # Adding drop down menu for input of country
+               pickerInput(inputId = "covid_country", 
+                           label = "Select Country:",   
+                           choices = unique(covid.df.2$Countries), 
+                           options = list(`actions-box` = TRUE, `none-selected-text` = "Please make a selection!",
+                                          `live-search` = TRUE, `live-search-placeholder`= "Type a Country!"),
+                           selected = unique(covid.df.2$Countries)[1],
+                           multiple = TRUE),
+             ), 
+             
+             # Having 2 sub-tabs: 1 for the map and 1 for the graph 
+             mainPanel(
+               tabsetPanel(id = 'tab_being_displayed',
+                           tabPanel('Map', leafletOutput('covidmap')),
+                           tabPanel('Graph', plotlyOutput('covidgraph'))
+               )
+             )             
+    ),    
+    
+    # Weather Tab =================================================
+    tabPanel('Weather', id = 'weather',
+             headerPanel("Monthly Weather Data"),
+             sidebarPanel(
+               selectInput(inputId = "weather_country", 
+                           label = "Select Country:",
+                           choices = as.character(unique(weather$Country)), 
+                           selected = NULL),    
+               selectInput(inputId = "weather_city", 
+                           label = "Select City:",
+                           choices = as.character(unique(weather$City)),
+                           selected = NULL), 
+               helpText("Note: Temperation/Precipitation data not available for some countries")
+               ),
+               mainPanel(
+                 h5("Temperature and Precipitation of major cities in Europe based on historical weather data collected over 30 years"), 
+                 plotlyOutput("weatherplot")      
+               )
+    ),
+
+    # Tourist Nights Tab =================================================
+    tabPanel('Tourist Nights', id = 'nights',
+             headerPanel("Monthly Visitor Nights"),
+               sidebarPanel(
+                 shinyjs::useShinyjs(),
+                 id = "side-panel",
+                 selectInput(inputId = "tourist_country1", 
+                             label = "Select Country 1:",
+                             choices = as.character(unique(sort(touristdf$Country))), 
+                             selected = NULL), 
+                 selectInput(inputId = "tourist_country2", 
+                             label = "Select Country 2:",
+                             choices = c("", as.character(unique(sort(touristdf$Country)))), 
+                             selected = NULL),
+                 actionButton("reset_input", "Reset"),
+                 helpText("Note: Users can select up to 2 countries for comparison")
+               ), 
+               mainPanel(
+                 h5("Nights spent at tourist accomodations by international tourists in Europe"), 
+                 plotlyOutput("touristplot")
+               )
+    ),
+
+    # Restaurant Tab ================================================= 
+    tabPanel('Restaurants', id = 'restaurant',
+             headerPanel('Restaurant Reviews by City'),
+             sidebarPanel(
+               selectInput(inputId = "r_city",
+                           label = "City",
+                           choices = unique(rest$City),
+                           selected = "London"),
+               selectInput(inputId = "r_type",
+                           label = "Cuisine/Food Type/Place Type",
+                           choices = unique(rest$Type),
+                           selected = "International"),
+               sliderInput(inputId = 'r_rating', 
+                           tags$label("Minimum Ratings: 1 = Awful, 3 = Average, 5 = Fantastic"),
+                           value = 5,
+                           min = 0,
+                           max = 5,
+                           step = 0.5),
+               sliderInput(inputId = 'r_review', 
+                           label = 'Number of Reviews',
+                           value = c(0, 10000),
+                           min = min(rest$`Number of Reviews`),
+                           max = max(rest$`Number of Reviews`),
+                           step = 500),
+               awesomeCheckboxGroup(inputId = 'r_price', 
+                                    label = 'Price Level:',
+                                    choices = unique(rest$`Price Level`),
+                                    selected = 'Moderate')
+               ),
+               
+               mainPanel(
+                 DT::DTOutput('restauranttable')
+               )
+    ),
+    
+    # Luxurious Hotel Tab ================================================= 
+    tabPanel('Luxurious Hotels', id = 'hotel',
+             headerPanel('Luxurious Hotel Ratings in Popular Cities'), 
+             sidebarPanel(
+               awesomeCheckboxGroup(inputId = 'h_country', 
+                                    label = 'Choose Country:',
+                                    choices = unique(hotel_table$Country),
+                                    selected = 'United Kingdom'),
+               sliderInput(inputId = 'h_number', 
+                           label = 'Minimum Number of Reviews:',
+                           value = min(hotel_table$`Number of Reviews`),
+                           min = 0,
+                           max = 16000,
+                           step = 200),
+               sliderInput(inputId = 'h_score',
+                           label = 'Minimum Review Score:',
+                           value = 1,
+                           min = 1, 
+                           max = 9.5,
+                           step = 0.5)
+               ),
+               
+               mainPanel(tabsetPanel(tabPanel('Table', DT::DTOutput('hotel_table')), 
+                                     tabPanel('Map', leaflet::leafletOutput('hotel_plot')))
+               )
+    ),
+    
+        
+    # Credits Tab ==================================
+    tabPanel('Credits', id = "credits",
+             mainPanel(p("This website was built using RShiny."),
+                       p("Other than Shiny, the following were used:"),
+                       p(tags$ul(tags$li("Symbols from Font Awesome"),
+                                 tags$li("Image from unsplash.com"))),
+                       p("The following R packages were used to build this RShiny application:"),
+                       p(),
+                       tags$code("base"), tags$code("dpylr"), tags$code("leaflet"), tags$code("plotly"),
+                       tags$code("ggplot2"), tags$code("ggmap"), tags$code("tidyverse"), tags$code("leaflet"), 
+                       tags$code("leaflet.extras"), tags$code("rworldmap"), 
+                       tags$code("jsonlite"), tags$code("lubridate"), 
+                       tags$code("DT"), tags$code("DataCombine"),
+                       tags$code("xml2"), tags$code("rvest"), tags$code("htmltools"), 
+                       tags$code("htmlwidgets"), tags$code("magrittr"), 
+                       tags$code("shinythemes"), tags$code("shinyWidgets"), tags$code("shinyjs"),
+                       tags$code("shinycssloaders"), tags$code("shinyTime")
+             )
+    )
+  )
+)
+```
+
+## Server
+
+```{r server, eval=FALSE}
+server <- function(input, output, session){
+  
+  # Travel Map Tab ================================
+  output$travelmap <- renderLeaflet({
+    leaflet() %>% addTiles(group = "Default") %>%
+                  addProviderTiles("Stamen.Toner", group = "Toner") %>%
+                  addProviderTiles(providers$Stamen.TonerLite, group = "Toner Lite") %>%
+                  addLayersControl(baseGroups = c("Default", "Toner", "Toner Lite"),
+                                   overlayGroups = attraction.type.list.Europe, 
+                                   options = layersControlOptions(collapsed = TRUE)) %>%
+                  addEasyButton(easyButton(icon = "fa-globe", 
+                                           title = "Back to Default Zoom",
+                                           onClick = JS("function(btn, map){ map.setZoom(2); }")))
+  })
+  
+  zoom <- reactive({
+    wiki.complete.Europe %>% filter(country %in% input$travel_country)
+  })
+  
+  travelmap_select1 <- reactive({
+    wiki.complete.Europe %>% filter(country %in% input$travel_country, type.sorted == attraction.type.list.Europe[1])
+  })
+  
+  travelmap_select2 <- reactive({
+    wiki.complete.Europe %>% filter(country %in% input$travel_country, type.sorted == attraction.type.list.Europe[2])
+  })
+  
+  travelmap_select3 <- reactive({
+    wiki.complete.Europe %>% filter(country %in% input$travel_country, type.sorted == attraction.type.list.Europe[3])
+  })
+  
+  travelmap_select4 <- reactive({
+    wiki.complete.Europe %>% filter(country %in% input$travel_country, type.sorted == attraction.type.list.Europe[4])
+  })
+  
+  travelmap_select5 <- reactive({
+    wiki.complete.Europe %>% filter(country %in% input$travel_country, type.sorted == attraction.type.list.Europe[5])
+  })
+  
+  observeEvent(input$travel_country, {
+    
+    leafletProxy("travelmap") %>%
+      clearMarkerClusters() %>%
+      clearMarkers() %>%
+      fitBounds(lng1 =  min(zoom()$longitude), lat1 = min(zoom()$latitude), 
+                lng2 =  max(zoom()$longitude), lat2 = max(zoom()$latitude)) %>%
+      addAwesomeMarkers(lng = travelmap_select1()$longitude,
+                        lat = travelmap_select1()$latitude, 
+                        popup = travelmap_select1()$label_text %>% lapply(htmltools::HTML),
+                        icon = IconSet$Accommodation,
+                        group = attraction.type.list.Europe[[1]],
+                        clusterOptions = markerClusterOptions()) %>%
+      addAwesomeMarkers(lng = travelmap_select2()$longitude,
+                        lat = travelmap_select2()$latitude, 
+                        popup = travelmap_select2()$label_text %>% lapply(htmltools::HTML),
+                        icon = IconSet$Attractions,
+                        group = attraction.type.list.Europe[[2]],
+                        clusterOptions = markerClusterOptions()) %>%
+      addAwesomeMarkers(lng = travelmap_select3()$longitude,
+                        lat = travelmap_select3()$latitude, 
+                        popup = travelmap_select3()$label_text %>% lapply(htmltools::HTML),
+                        icon = IconSet$Food,
+                        group = attraction.type.list.Europe[[3]],
+                        clusterOptions = markerClusterOptions()) %>%
+      addAwesomeMarkers(lng = travelmap_select4()$longitude,
+                        lat = travelmap_select4()$latitude, 
+                        popup = travelmap_select4()$label_text %>% lapply(htmltools::HTML),
+                        icon = IconSet$Transport,
+                        group = attraction.type.list.Europe[[4]],
+                        clusterOptions = markerClusterOptions()) %>%
+      addAwesomeMarkers(lng = travelmap_select5()$longitude,
+                        lat = travelmap_select5()$latitude, 
+                        popup = travelmap_select5()$label_text %>% lapply(htmltools::HTML),
+                        icon = IconSet$Shopping,
+                        group = attraction.type.list.Europe[[5]],
+                        clusterOptions = markerClusterOptions())
+  })
+  
+  #reset button - map
+  observeEvent(input$reset_input2, {
+    shinyjs::reset("side-panel2")
+  })
+
+  
+  # Covid-19 Tab ================================
+  # Covid-19 Line Graph 
+  output$covidgraph <- renderPlotly({
+    
+    req(input$covid_country)
+    covid.plot <- covid.df.2 %>% filter(Countries %in% input$covid_country, Date <= input$covid_date)
+    p <- plot_ly(covid.plot)
+    
+    # Using bar graphs to show the number of new Covid cases per day 
+    p <- p %>% add_bars(x = ~Date, 
+                        y = ~Cases,
+                        name = ~Countries,
+                        color = ~Countries,
+                        hovertemplate = ~paste('Date: %{x}', '<br>New Cases: %{y}'))
+    
+    # Using line graphs to show the cumulative cases for 14 days per 100,000
+    p <- p %>% add_lines(x = ~Date, 
+                         y = ~Cumulative, 
+                         line = list(color=~Countries, width=2, dash="dot"),
+                         name = ~Countries,
+                         yaxis = "y2",
+                         hovertemplate = ~paste('Date: %{x}', 
+                                                '<br>Cumulative Cases for 14 days per 100000: %{y}'))
+    
+    # Having 2 y-axes, 1 for the line graph and 1 for the bar graph                      
+    p <- p %>% layout(yaxis2 = list(tickfont = list(size=8), overlaying = "y", side = "right",
+                                    automargin = TRUE, title = "New Cases", 
+                                    titlefont = list(size = 10), range = c(0, max(covid.df.2$Cumulative))),
+                      xaxis = list(title="Date", titlefont = list(size = 10), 
+                                   tickfont = list(size = 10), tickangle = 30),
+                      yaxis = list(side = 'left', title = 'Cumulative Cases for 14 days per 100000', 
+                                   titlefont = list(size = 10), tickfont = list(size = 9)), 
+                      legend = list(orientation = 'h', y=-0.2, font = list(size = 10))) 
+    
+    p
+    
+  }) 
+  
+  # Covid-19 Map
+  reactive_db <- reactive({covid.df.2 %>% filter(Date == input$covid_date)})
+  
+  output$covidmap <- renderLeaflet({
+    
+    leaflet() %>% 
+      addTiles(group = "Default") %>% 
+      addProviderTiles("Stamen.Toner", group = "Toner") %>%
+      addProviderTiles(providers$Stamen.TonerLite, group = "Toner Lite") %>%
+      addLayersControl(position = "bottomright",
+                       baseGroups = c("Default", "Toner", "Toner Lite"),
+                       overlayGroups = c("COVID - New Cases", 
+                                         "COVID - Cumulative Cases for 14 days per 100,000"),
+                       options = layersControlOptions(collapsed = TRUE)) %>% 
+      fitBounds(0, -25, 90, 65) %>% 
+      addProviderTiles(providers$CartoDB.Positron) %>%
+      addEasyButton(easyButton(icon = "fa-globe", 
+                               title = "Back to Default Zoom",
+                               onClick = JS("function(btn, map){ map.setZoom(2); }")))
+  })
+  
+  # Adding circle points to the map to show both new cases and cumulative cases for 14 days per 100,000 
+  # and allow for comparisons across different countries.
+  observeEvent(input$covid_date, {
+    
+    req(input$tab_being_displayed == "Map")
+    leafletProxy("covidmap") %>% 
+      clearMarkers() %>% 
+      clearShapes() %>%
+      addCircleMarkers(data = reactive_db(), 
+                       lat = ~lat, 
+                       lng = ~lon, 
+                       weight = 1, 
+                       radius = ~(Cases)^(1/4), 
+                       fillOpacity = 0.2, 
+                       color = "#cc0264", 
+                       group = 'COVID - New Cases', 
+                       label = sprintf("<strong>%s (New)</strong><br/>Confirmed cases: %s<br/>Deaths: %d", 
+                                       reactive_db()$Countries, 
+                                       reactive_db()$Cases, 
+                                       reactive_db()$Deaths) %>% lapply(htmltools::HTML),
+                       labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
+                                                   textsize = "15px", direction = "auto")) %>%
+      addCircleMarkers(data = reactive_db(), 
+                       lat = ~lat, 
+                       lng = ~lon, 
+                       weight = 1, 
+                       radius = ~(Cumulative)^(1/4), 
+                       fillOpacity = 0.2, 
+                       color = "#0267cc", 
+                       group = 'COVID - Cumulative Cases for 14 days per 100,000', 
+                       label = sprintf("<strong>%s (Cumulated)</strong><br/>Confirmed cases: %s<br/>Deaths: %d", 
+                                       reactive_db()$Countries, 
+                                       reactive_db()$Cumulative, 
+                                       reactive_db()$Deaths) %>% lapply(htmltools::HTML),
+                       labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
+                                                   textsize = "15px", direction = "auto")) 
+  })
+  
+  
+  # Weather Tab ================================
+  # City drop-down according to country input 
+  observe({
+    x = input$weather_country
+    updateSelectInput(session,'weather_city', 
+                      choices = weather[weather$Country == x, "City"], 
+                      selected = NULL)
+  })
+  
+  # Weather Plot
+  output$weatherplot <-renderPlotly({
+    
+    citydata <- weather[weather$Country == input$weather_country & 
+                        weather$City == input$weather_city, ]
+    citydata$Month <- factor(citydata$Month, levels = c("Jan", "Feb", "Mar", "Apr", "May", "Jun", 
+                                                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"))
+
+    ay <- list(tickfont = list(size = 8),
+               overlaying = "y",
+               side = "right",
+               automargin = TRUE,
+               title = "Average Temperature(°C)", 
+               titlefont = list(size = 10),
+               range = c(min(citydata$TempLow), 35))
+    
+    # Creating an interactive plot
+    fig <- plot_ly(citydata)
+    
+    # Using line graph to show monthly average temperature
+    fig <- fig %>% add_trace(x = ~Month,
+                             y = ~TempAverage, 
+                             type = "scatter",
+                             mode = "line",
+                             name = "Temperature", 
+                             yaxis = "y2",
+                             hovertemplate = ~paste('Month: %{x}', 
+                                                    '<br>Average Temperature: %{y:.0}°C'))
+    
+    # Using ribbon graph to show monthly maximum and minimum temperature 
+    fig <- fig %>% add_ribbons(x = ~Month, 
+                               ymin = ~TempLow, 
+                               ymax = ~TempHigh,
+                               name = "Temperature", 
+                               showlegend= FALSE, 
+                               yaxis = "y2",
+                               line = list(color = 'rgba(7, 164, 181, 0.05)'),
+                               fillcolor = 'rgba(7, 164, 181, 0.2)', 
+                               hovertemplate = ~paste('Month: %{x}', 
+                                                      '<br>Highest/Lowest Temperature: %{y:.0}°C'))
+    
+    # Using bar graphs to show the monthly precipitation
+    fig <- fig %>% add_bars(x = ~Month, 
+                            y = ~Precipitation,
+                            width = 0.6,
+                            name = "Precipitation",
+                            marker = list(color = '#F08080'), 
+                            hovertemplate = ~paste('Month: %{x}', 
+                                                   '<br>Average Precipitation: %{y:.0}mm'))
+    
+    # Using a line graph to show annual average temperature 
+    fig <- fig %>% add_lines(x = ~Month, 
+                             y = mean(citydata$TempAverage), 
+                             line = list(width=1, dash="dot"),
+                             name = "Annual Average Temperature",
+                             yaxis = "y2",
+                             hoverinfo = "none")
+    
+    # Using a line graph to show average temperature (from Jan 2018 to latest data)
+    fig <- fig %>% add_lines(x = ~Month, 
+                             y = mean(citydata$Precipitation), 
+                             line = list(width=1, dash="dot"),
+                             name = "Annual Average Precipitation",
+                             hoverinfo = "none")
+   
+    # Creating a secondary axis for Temperature data (Primary axis is for Precipitation data)
+    fig <- fig %>% layout(yaxis2 = ay,
+                          xaxis = list(title="Month", titlefont = list(size = 10), 
+                                       tickfont = list(size=10), tickangle = 30),
+                          yaxis = list(side = 'left', title = 'Average Precipitation(mm)', 
+                                       titlefont = list(size = 10), 
+                                       range = c(0, 120), tickfont = list(size=9)), 
+                          legend = list(orientation = 'h', y=-0.2, font = list(size=10)))
+  })
+
+  
+  # Tourist Nights Tab ================================
+  output$touristplot <-renderPlotly({
+    
+    countrydata <- gather(touristdf[touristdf$Country == input$tourist_country1 | 
+                                    touristdf$Country == input$tourist_country2, ],
+                          Month, Nights, "Jan-18":"Aug-20")
+    
+    countrydata$Month  <- factor(countrydata$Month, levels = touristdf_colnames[-1])
+    countrydata$Nights <- as.numeric(countrydata$Nights)
+    
+    country <-  countrydata[complete.cases(countrydata), ]
+    country1data <- country[country$Country == input$tourist_country1, ]
+    country2data <- country[country$Country == input$tourist_country2, ]
+    
+    if (nrow(country1data) > nrow(country2data)){
+      allmonths <- country1data$Month
+    } else {
+      allmonths <- country2data$Month
+    }
+    
+    # Creating an interactive plot
+    fig1 <- plot_ly()
+    
+    # Using bar graphs to show monthly tourist nights for first country 
+    fig1 <- fig1 %>% add_bars(data = country1data,
+                              x = ~Month, 
+                              y = ~Nights, 
+                              name = input$tourist_country1,
+                              marker = list(color = '#FF9673'), 
+                              hovertemplate = ~paste('Month: %{x}', '<br>Nights: %{y:.0}'))
+    
+    # Using bar graphs to show monthly tourist nights for second country (if given)
+    fig1 <- fig1 %>% add_bars(data = country2data, 
+                              x = ~Month, 
+                              y = ~Nights, 
+                              name = input$tourist_country2,
+                              marker = list(color = '#CC1480'), 
+                              hovertemplate = ~paste('Month: %{x}', '<br>Nights: %{y:.0}'))
+    
+    # Using line graph to show average tourist nights for first country 
+    fig1 <- fig1 %>% add_lines(data = country1data,
+                               x = allmonths,
+                               y = mean(country1data$Nights), 
+                               line = list(width = 1, dash = "dot", color = "green"),
+                               name = paste("Average Nights for", input$tourist_country1),
+                               hoverinfo = "none")
+    
+     # Using line graph to show average tourist nights for second country (if given)
+    fig1 <- fig1 %>% add_lines(data = country2data, 
+                               x = allmonths,
+                               y = mean(country2data$Nights), 
+                               line = list(width = 1, dash = "dot", color = "blue"),
+                               name = paste("Average Nights for", input$tourist_country2),
+                               hoverinfo = "none")
+    
+    fig1 <- fig1 %>% layout(xaxis = list(title = list(text="Month", standoff=3), 
+                                         titlefont = list(size = 10), tickfont = list(size=8), 
+                                         tickangle = 45), 
+                            legend = list(orientation = 'h', y=-0.2, font = list(size=10)))
+    fig1
+    
+  })
+  
+  # Reset button for Tourist Nights
+  observeEvent(input$reset_input, {shinyjs::reset("side-panel")})
+  
+  
+  # Restaurants Tab ================================
+  output$restauranttable <- DT::renderDT({
+    rest %>% filter(City == input$r_city, 
+                    Type == input$r_type,
+                    Rating <= input$r_rating,
+                    `Number of Reviews` >= input$r_review[1] & `Number of Reviews` <= input$r_review[2],
+                    `Price Level` == input$r_price) %>% 
+      select(Name, Rating, `Price Level`, `Number of Reviews`, `Review 1`, `Review 2`)
+  })
+  
+  
+  # Luxurious Hotels Tab ================================ 
+  # Table  
+  output$hotel_table <- DT::renderDT({
+    
+    hotel_table %>% filter(`Country` %in% input$h_country,
+                           `Number of Reviews` >= input$h_number,
+                           `Average Score` >= input$h_score) %>% 
+                    select(`Name`, `Address`, `Average Score`, `Lowest Score`, 
+                           `Number of Reviews`, `Latest Review`)
+  })
+  
+  # Map
+  output$hotel_plot  <- leaflet::renderLeaflet({
+    req(input$h_country)
+    m <- leaflet()
+    
+    for (i in 1:length(input$h_country)){
+      map_data <- hotel_map %>% filter(Country == input$h_country[i],
+                                       Total_Number_of_Reviews >= input$h_number, 
+                                       Average_Score >= input$h_score)
+      
+      labs <- lapply(seq(nrow(map_data)), function(i) {
+        paste0('<p>', map_data[i, "Hotel_Name"], '</p>', 
+               map_data[i, "Hotel_Address"],'<p>', 
+               'Average Rating: ', map_data[i, "Average_Score"], '</p>' ) 
+      })
+      
+      m <- m %>% addAwesomeMarkers(lng = map_data$lng,
+                                   lat = map_data$lat, 
+                                   popup = lapply(labs, htmltools::HTML), 
+                                   icon = makeAwesomeIcon(icon = 'hotel', markerColor = 'blue', 
+                                                          iconColor = 'white', library = "fa"),
+                                   group = input$h_country[i])
+    }
+    
+    m <- m %>% addTiles(group = "Default") %>%
+               addProviderTiles("Stamen.Toner", group = "Toner") %>%
+               addProviderTiles(providers$Stamen.TonerLite, group = "Toner Lite") %>% 
+               addLayersControl(baseGroups = c('Default', 'Toner', 'Toner Lite'), 
+                                overlayGroups = input$h_country) %>% 
+               addEasyButton(easyButton(icon = "fa-globe", 
+                                        title = "Back to Default Zoom",
+                                        onClick = JS("function(btn, map){ map.setZoom(2); }")))
+    
+    m
+  })  
+  
+}
+
+shinyApp(ui = ui, server = server)
+```
+
+# Possibilities for Further Development
+
+## Extending Database to Other Continents 
+
+Rather than just focusing on countries in Europe, the App can also incorporate data for the other countries. To do so however would require getting the access to these data. Currently, one major limitation is in the availability of data which leads to inconsistency between different tabs. If possible, it would be ideal to ensure that the data is complete for all countries which may not be readily accessible i.e. not open source.
+
+## Incorporate more Real-time, Live Data 
+
+To ensure that all information on the App is relevant, most of the data should be obtained from frequently updated websites. This is especially so for the Restaurants and Hotels tab, providing more recent reviews to incorporate the latest, most accurate ratings. Nonetheless, data availability remains a huge problem which is why this was not implemented in this version. 
+ 
+## Addition of Predictive Analytics
+
+Given the user’s choices, it is possible to utilise some predictive methods eg. decision trees, recommendation engines to provide suggestions on which country is the best for him or her. Having some of these capabilities will enhance the attractiveness and usefulness of our App. 
+
+Based on the user’s gathered inputs over time (in terms of which location/country/city, or which type of input into the travel map (accomodation/landmarks etc), and the particular landmark clicked on, predictive analytics could analyse said inputs and run it through a recommendation engine algorithm to produce a suggested landmark or location (country/city) of interest. Such a model would be along the lines of Bayesian classification, collaborative filtering (CFs), clustering or even a NN.
+
+In addition, not only from an individual user perspective, but from a user-wide perspective, the app could keep track of the most common or popular locations the user base searches for and the tab that was interacted with the most. Developers could use this data to prioritize what aspect of the app to continue adding extra functionality first.
+
+## News Headline Summary Page
+
+Visitors may wish to find out the current events and happenings of the country they are planning to visit. One idea would be to create a “headline summary page”, with the news headlines and hyperlinks web-scraped from reputable journalism websites, with the latest headlines or articles about the country or city. The user would be able to select the number of articles, date published and country/city to show, and the page would show a list of recent articles. He or she could then read those headlines and click on the hyperlinks he wants to explore to read the news. A potential traveller could take one look and have an overall idea of the key happenings within the country in his chosen timeframe, bringing him up to speed of current events very quickly. It would be similar to the Google “Top Stories” Widget, but a more condensed version with only the headlines and more links.
